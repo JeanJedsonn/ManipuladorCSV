@@ -1,0 +1,241 @@
+import sys
+
+from baseDeDatos import Juego
+from typing import Optional,List
+from baseDeDatos import cargarDB
+from baseDeDatos import DB_Juegos
+from utilidades import consolaDev
+import os
+import csv
+import re
+
+# Configuración de rutas de archivos
+DB_PATH = 'entrada/DB.csv'
+VENDIDO_PATH = 'entrada/Vendido.csv'
+CATALOGO_PATH = 'entrada/Catalogo.csv'
+
+# Nombres de archivos de salida como se indica en el readme y la solicitud
+CON_OFERTA_EN_CATALOGO_PATHS = ['ConOfertaEnCatalogo.csv']
+CON_OFERTA_SIN_CATALOGO_PATHS = ['ConOfertaSinCatalogo.csv']
+SIN_OFERTA_PATHS = ['SinOferta.csv']
+DESCARTADA_PATHS = ['Descartada.csv']
+NO_ENCONTRADOS_PATHS = ['NoEncontrados.csv']
+
+
+def cargaerCatalogo() -> set:
+    print(f"[*] Cargando catálogo desde '{CATALOGO_PATH}'...")
+    
+    catalogo_titulos = set()
+    if os.path.exists(CATALOGO_PATH):
+        try:
+            with open(CATALOGO_PATH, mode='r', encoding='utf-8', errors='replace') as f:
+                lector = csv.DictReader(f, delimiter=";")
+                for fila in lector:
+                    t = fila.get('Juegos')
+                    if t:
+                        catalogo_titulos.add(t.strip())
+            print(f"[+] Catálogo cargado correctamente ({len(catalogo_titulos)} títulos únicos).")
+        except Exception as e:
+            print(f"[!] Error al leer '{CATALOGO_PATH}': {e}")
+            return
+    else:
+        print(f"[!] Error: El archivo '{CATALOGO_PATH}' no existe.")
+        return
+    return catalogo_titulos
+
+def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> list:
+    print(f"\n[*] Procesando juegos vendidos desde '{VENDIDO_PATH}'...")
+    if not os.path.exists(VENDIDO_PATH):
+        print(f"[!] Error: El archivo '{VENDIDO_PATH}' no existe.")
+        return
+    
+    descartada_list:                list[dict[str,str|int]] = []                # Descartado: Las 4 columnas tienen valor, no es vendible
+    sin_oferta_list:                list[dict[str,str|int]] = []                # Sin Oferta: Tiene alguna columna libre, pero no esta en oferta
+    con_oferta_en_catalogo_list:    list[dict[str,str|int]] = []                # Con Oferta: Tiene alguna columna con precio de oferta y esta en catalogo
+    con_oferta_sin_catalogo_list:   list[dict[str,str|int]] = []                # Con Oferta: Tiene alguna columna con precio de oferta pero no esta en catalogo
+    no_encontrados:                 list[dict[str,str|int]] = []                # No encontrados: No se encontro coincidencia en la base de datos
+    
+    try:
+        with open(VENDIDO_PATH, mode='r', encoding='utf-8', errors='replace') as f:
+            lector = csv.DictReader(f, delimiter=";")
+            
+            print("[*] Procesando los juegos vendidos...")
+            for fila in lector:
+                # El archivo vendido tiene el título en la columna 'Juegos'
+                
+                juego: str = fila.get('Juegos')
+
+                # si no tiene titulo lo saltamos
+                if not juego:
+                    continue
+                
+                # Extraemos las casillas requeridas
+                ps4p: str = fila.get('PS4P', '')
+                ps4s: str = fila.get('PS4S', '')
+                ps5p: str = fila.get('PS5P', '')
+                ps5s: str = fila.get('PS5S', '')
+                
+                # Una fila se descarta si las 4 columnas a la vez tienen un valor válido (no vacío ni NULL/ND/?)
+                descartar_fila: bool = all(
+                    fila.get(col) is not None and 
+                    fila.get(col).strip() != ''
+                    for col in ['PS4P', 'PS4S', 'PS5P', 'PS5S']
+                )
+                
+                # Puede haber registros con múltiples juegos separados por salto de línea (\n).
+                titulos = [s.strip() for s in juego.split('\n') if s.strip()]
+                
+                # buscamos cada juego del titulo en la base de datos
+                for titulo in titulos:
+                    id_juego = BaseDeDatos.get_id(titulo)                      
+                    if id_juego != None:
+                        url = BaseDeDatos.get_url(id_juego)
+                    else:
+                        url = ""
+                        
+                    # Creamos el registro de salida incluyendo ID y URL
+                    registro: dict[str,str|int] = {
+                        'ID': id_juego,
+                        'Titulo': titulo,
+                        'PS4P': ps4p,
+                        'PS4S': ps4s,
+                        'PS5P': ps5p,
+                        'PS5S': ps5s,
+                        # url protegido por si no se encuentra el juego
+                        'URL': url
+                    }
+
+                    # Clasificar en la lista respectiva
+                    
+                    # 1. Las 4 columnas tienen valor
+                    if descartar_fila:
+                        # print("descartada")
+                        descartada_list.append(registro)
+                    
+                    # 2. El juego no se encuentra en la base de datos
+                    elif id_juego == None:
+                        # print("no encontrado")
+                        no_encontrados.append(registro)
+                    
+                    # 3. El juego tiene oferta ?
+                    else:
+                        if BaseDeDatos.tieneOferta(id_juego):
+                            # Esta en catalogo
+                            if juego in catalogo_titulos:
+                                con_oferta_en_catalogo_list.append(registro)
+                            # No esta en catalogo
+                            else:
+                                con_oferta_sin_catalogo_list.append(registro)
+                        else:
+                            #print("Titulo:", titulo,"ID:",id_juego,"Descartado?",descartar_fila)
+                            sin_oferta_list.append(registro)
+                    
+            
+            
+        print(f"[+] Procesamiento completado:")
+        print(f"    - Con Oferta en Catálogo: {len(con_oferta_en_catalogo_list)} ventas.")
+        print(f"    - Con Oferta sin Catálogo: {len(con_oferta_sin_catalogo_list)} ventas.")
+        print(f"    - Sin Oferta: {len(sin_oferta_list)} ventas.")
+        print(f"    - Descartadas (4 valores activos): {len(descartada_list)} ventas.")
+        print(f"    - No Encontrados: {len(no_encontrados)} ventas.")
+    except Exception as e:
+        print(f"[!] Error al procesar '{VENDIDO_PATH}': {e}, linea 187")
+        return
+
+    return ({
+        'con_oferta_en_catalogo': con_oferta_en_catalogo_list, 
+        'con_oferta_sin_catalogo': con_oferta_sin_catalogo_list, 
+        'sin_oferta': sin_oferta_list, 
+        'descartada': descartada_list, 
+        'no_encontrados': no_encontrados
+    })
+    
+def main(valor: bool =False):
+    # 1. Cargar base de datos
+    BaseDeDatos: DB_Juegos = cargarDB(DB_PATH)
+
+    # 1.5. Cargar catálogo (Catalogo.csv)
+    catalogo_titulos: set = cargaerCatalogo()
+
+    # 2. Cargar y clasificar los juegos vendidos (Vendido.csv)
+    listas_juegos: dict[
+        str,
+        list[dict[str,str|int]]
+    ] = procesarVendido(BaseDeDatos,catalogo_titulos)
+
+    # 3. Guardar las listas generadas en los archivos correspondientes
+    fieldnames:list[str] = ['ID', 'Titulo', 'PS4P', 'PS4S', 'PS5P', 'PS5S', 'URL']
+    
+    print("\n[*] Guardando archivos de salida...")
+    
+    # Escribir archivos para "Con Oferta en Catálogo"
+    for path in CON_OFERTA_EN_CATALOGO_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(listas_juegos['con_oferta_en_catalogo'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+            
+    # Escribir archivos para "Con Oferta sin Catálogo"
+    for path in CON_OFERTA_SIN_CATALOGO_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(listas_juegos['con_oferta_sin_catalogo'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+            
+    # Escribir archivos para "Sin Oferta"
+    for path in SIN_OFERTA_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(listas_juegos['sin_oferta'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+            
+    # Escribir archivos para "Descartadas"
+    for path in DESCARTADA_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(listas_juegos['descartada'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+            
+    # Mostrar advertencias si hubo juegos no encontrados en DB.csv
+    """
+    if no_encontrados:
+        print(f"\n[i] Advertencia: {len(no_encontrados)} juegos no se encontraron en '{DB_PATH}' y se enviaron a SinOferta:")
+        for titulo in no_encontrados:
+            print(f"    {titulo}")
+    """     
+    # Escribir archivos para "No Encontrados"
+    for path in NO_ENCONTRADOS_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(listas_juegos['no_encontrados'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+
+    print("\n" + "=" * 60)
+    print("  PROCESO FINALIZADO CON ÉXITO")
+    print("=" * 60)
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        main(sys.argv[1])
+    else:
+        main()
