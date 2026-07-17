@@ -13,10 +13,10 @@ class Juego:
 
     def get_id(self) -> int:
         return self.id
-    
+
     def get_titulo(self) -> str:
         return self.titulo
-    
+
     def get_url(self) -> str:
         return self.url
 
@@ -55,7 +55,7 @@ class DB_Juegos:
     # devuelve el titulo de un id, si no existe devuelve None
     def get_titulo(self,id: int) -> Optional[str]:
         return self.diccionario_juegos[id].get_titulo()
-    
+
     # devuelve la url de un id, si no existe devuelve None
     def get_url(self,id: int) -> Optional[str]:
         return self.diccionario_juegos[id].get_url()
@@ -70,24 +70,24 @@ class DB_Juegos:
 
     def tieneOferta(self,id: int) -> bool:
         return self.diccionario_juegos[id].tieneOferta()
-    
 
-def cargarDB(DB_PATH):
+
+def cargarDB(DB_PATH) -> DB_Juegos:
     BaseDeDatos = DB_Juegos()
 
     print("=" * 60)
     print("  PROCESADOR DE CATÁLOGOS - GENERADOR DE LISTAS DE OFERTAS")
     print("=" * 60)
-    
+
     # 1. Cargar la base de datos de juegos (DB.csv)
     print(f"[*] Cargando base de datos desde '{DB_PATH}'...")
     if not os.path.exists(DB_PATH):
         print(f"[!] Error: El archivo '{DB_PATH}' no existe.")
-        return
-    
+        return DB_Juegos()
+
     try:
         with open(DB_PATH, mode='r', encoding='utf-8', errors='replace') as f:
-            
+
             # leer todos los titulos de DB.csv
             lector = csv.DictReader(f, delimiter=";")
             print(lector.fieldnames)
@@ -111,7 +111,7 @@ def cargarDB(DB_PATH):
                     'PAN': fila.get('Precio Oferta: Panama'),
                     'BRA': fila.get('Precio Oferta: Brasil')
                 }
-                
+
                 if titulo:
                     # guardamos el titulo
                     BaseDeDatos.set_juego(fila.get('ID'), titulo, fila.get('Imagen'), oferta, original)
@@ -122,4 +122,4 @@ def cargarDB(DB_PATH):
 
     except Exception as e:
         print(f"[!] Error al leer '{DB_PATH}': {e}")
-        return
+        return DB_Juegos()
