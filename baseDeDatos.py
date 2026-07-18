@@ -4,18 +4,26 @@ from typing import Dict, Optional
 
 # Objeto con la forma de un juego
 class Juego:
-    def __init__(self, id: int, titulo: str, url: str = "", oferta: dict[str,str] = {}, original: dict[str,str] = {}) -> None:
+    def __init__(self, id: int, titulo: str, url: str = "",ps4: bool = False, ps5: bool = False, oferta: dict[str,str] = {}, original: dict[str,str] = {}) -> None:
         self.id:         int = id
         self.titulo:     str = titulo
         self.url:        str = url
         self.oferta:     dict[str,str] = oferta
         self.original:   dict[str,str] = original
+        self.ps4:        bool = ps4                                  # Si el juego tiene alguna venta de PS4
+        self.ps5:        bool = ps5                                  # Si el juego tiene alguna venta de PS5
 
     def get_id(self) -> int:
         return self.id
 
     def get_titulo(self) -> str:
         return self.titulo
+
+    def get_ps4(self) -> bool:
+        return self.ps4
+
+    def get_ps5(self) -> bool:
+        return self.ps5
 
     def get_url(self) -> str:
         return self.url
@@ -41,8 +49,8 @@ class DB_Juegos:
         self.indice_titulos:     Dict[str, int]   = {}                                # Titulo -> ID
 
     # agrega un juego a la base de datos
-    def set_juego(self, id: int, titulo: str, url: str = "", oferta: dict[str,str] = {}, original: dict[str,str] = {}) -> None:
-        self.diccionario_juegos[id] = Juego(id, titulo, url, oferta, original)
+    def set_juego(self, id: int, titulo: str, url: str = "",ps4: bool = False, ps5: bool = False, oferta: dict[str,str] = {}, original: dict[str,str] = {}) -> None:
+        self.diccionario_juegos[id] = Juego(id, titulo, url, ps4, ps5, oferta, original)
         self.indice_titulos[titulo.lower().strip()] = id
 
     def get_juego(self,id: int) -> Optional[Juego]:
@@ -67,7 +75,7 @@ class DB_Juegos:
     # devuelve el precio original de un id, si no existe devuelve None
     def get_original(self,id: int) -> Optional[dict]:
         return self.diccionario_juegos[id].get_original()
-
+        
     def tieneOferta(self,id: int) -> bool:
         return self.diccionario_juegos[id].tieneOferta()
 
@@ -90,7 +98,6 @@ def cargarDB(DB_PATH) -> DB_Juegos:
 
             # leer todos los titulos de DB.csv
             lector = csv.DictReader(f, delimiter=";")
-            print(lector.fieldnames)
             for fila in lector:
                 titulo = fila.get('Titulo')
 
@@ -112,9 +119,12 @@ def cargarDB(DB_PATH) -> DB_Juegos:
                     'BRA': fila.get('Precio Oferta: Brasil')
                 }
 
+                ps4 = str(fila.get('PS4')).strip().lower() == "show"
+                ps5 = str(fila.get('PS5')).strip().lower() == "show"
+
                 if titulo:
                     # guardamos el titulo
-                    BaseDeDatos.set_juego(fila.get('ID'), titulo, fila.get('Imagen'), oferta, original)
+                    BaseDeDatos.set_juego(fila.get('ID'), titulo, fila.get('Imagen'),ps4, ps5, oferta, original)
 
         # Imprimir todos los titulos cargados
         print(f"[+] Base de datos cargada correctamente ({len(BaseDeDatos.diccionario_juegos)} títulos únicos mapeados).")

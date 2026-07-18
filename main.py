@@ -1,12 +1,11 @@
 import sys
 
-from typing_extensions import Any
-
 # from baseDeDatos import Juego
-# from typing import Optional,List
+from typing import Optional,List, Any
 from baseDeDatos import cargarDB
-from baseDeDatos import DB_Juegos
-# from utilidades import consolaDev
+from baseDeDatos import DB_Juegos,Juego
+from venta import Venta, Registro
+from utilidades import consolaDev
 import os
 import csv
 # import re
@@ -22,6 +21,7 @@ CON_OFERTA_SIN_CATALOGO_PATHS = ['salida/ConOfertaSinCatalogo.csv']
 SIN_OFERTA_PATHS = ['salida/SinOferta.csv']
 DESCARTADA_PATHS = ['salida/Descartada.csv']
 NO_ENCONTRADOS_PATHS = ['salida/NoEncontrados.csv']
+CATALOGO_PROPUESTO_PATHS = ['salida/CatalogoPropuesto.csv']
 
 
 def cargaerCatalogo() -> set:
@@ -56,7 +56,9 @@ def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> dict[str, 
     con_oferta_en_catalogo_list:    list[dict[str,str|int]] = []                # Con Oferta: Tiene alguna columna con precio de oferta y esta en catalogo
     con_oferta_sin_catalogo_list:   list[dict[str,str|int]] = []                # Con Oferta: Tiene alguna columna con precio de oferta pero no esta en catalogo
     no_encontrados:                 list[dict[str,str|int]] = []                # No encontrados: No se encontro coincidencia en la base de datos
-
+    lista_total:                    list[dict[str,str|int]] = []                # Total: Todas las ventas para su revision
+    ventas:                         dict[str, Venta]        = {}                # diccionario de ventas para su revision
+    
     try:
         with open(VENDIDO_PATH, mode='r', encoding='utf-8', errors='replace') as f:
             lector = csv.DictReader(f, delimiter=";")
@@ -96,7 +98,7 @@ def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> dict[str, 
                         url = ""
 
                     # Creamos el registro de salida incluyendo ID y URL
-                    registro: dict[str,str|Any] = {
+                    registro: dict[str,str| Any] = {
                         'ID': id_juego,
                         'Titulo': titulo,
                         'PS4P': ps4p,
@@ -129,9 +131,20 @@ def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> dict[str, 
                             else:
                                 con_oferta_sin_catalogo_list.append(registro)
                         else:
-                            #print("Titulo:", titulo,"ID:",id_juego,"Descartado?",descartar_fila)
+                            # No tiene oferta
                             sin_oferta_list.append(registro)
 
+                        # Total: Todas las ventas para su revision
+                        
+                        if id_juego not in ventas.keys():
+                            ventas[id_juego] = Venta()          # Crea un elemento Venta
+                            ventas[id_juego].set_id(id_juego)   # Asigna el id del juego
+                            ventas[id_juego].set_url(url)       # Asigna la url del juego
+                            ventas[id_juego].set_ps4(BaseDeDatos.get_juego(id_juego).get_ps4())       # Asigna la venta de PS4
+                            ventas[id_juego].set_ps5(BaseDeDatos.get_juego(id_juego).get_ps5())       # Asigna la venta de PS5
+
+                        registro = Registro(ps4p, ps4s, ps5p, ps5s) # Crea un registro
+                        ventas[id_juego].push_registro(registro)    # Añade el registro a la venta
 
 
         print("[+] Procesamiento completado:")
@@ -140,6 +153,10 @@ def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> dict[str, 
         print(f"    - Sin Oferta: {len(sin_oferta_list)} ventas.")
         print(f"    - Descartadas (4 valores activos): {len(descartada_list)} ventas.")
         print(f"    - No Encontrados: {len(no_encontrados)} ventas.")
+        ventas_totales: int = 0
+        for venta in ventas.values():
+            ventas_totales += venta.get_vendidos()
+        print(f"    - Total de ventas procesadas: {ventas_totales} ventas.")
     except Exception as e:
         print(f"[!] Error al procesar '{VENDIDO_PATH}': {e}, linea 187")
         return {}
@@ -149,7 +166,8 @@ def procesarVendido(BaseDeDatos: DB_Juegos, catalogo_titulos: set) -> dict[str, 
         'con_oferta_sin_catalogo': con_oferta_sin_catalogo_list,
         'sin_oferta': sin_oferta_list,
         'descartada': descartada_list,
-        'no_encontrados': no_encontrados
+        'no_encontrados': no_encontrados,
+        'lista_total': ventas
     })
 
 def main(valor: bool =False):
@@ -225,6 +243,59 @@ def main(valor: bool =False):
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(listas_juegos['no_encontrados'])
+            print(f"    [+] Archivo guardado: '{path}'")
+        except Exception as e:
+            print(f"    [!] Error al guardar '{path}': {e}")
+
+    # Escribir archivos para "Catalogo Propuesto"
+    for path in CATALOGO_PROPUESTO_PATHS:
+        try:
+            with open(path, mode='w', encoding='utf-8', newline='') as f:
+                camposCatalogo: list[str] = ['ID', 'Titulo', 'PS4', 'PS5', 'Tipo', 'Consola', 'URL', 'Venta']
+
+
+                writer = csv.DictWriter(f, fieldnames=camposCatalogo)
+                writer.writeheader()
+
+                for id_juego, registro in listas_juegos['lista_total'].items():
+                    tipos = registro.tipos_libres()               # Tipos de juegos que se pueden vender
+                    precios = registro.calcular_precio_mediano()  # Precio mediano de los juegos vendidos
+                    
+                    registro_catalogo = {
+                        'ID': id_juego,
+                        'Titulo': BaseDeDatos.get_juego(id_juego).get_titulo(),
+                        'PS4': "show" if registro.get_ps4() else "hide",                                  # Tiene version de PS4
+                        'PS5': "show" if registro.get_ps5() else "hide",                                  # Tiene version de PS5
+                        'Tipo': "",                                                 # Tipo de venta
+                        'Consola':"",                                               # Consola del juego
+                        'URL': registro.get_url(),                                                  # Url del juego
+                        'Venta': ""                                                 # precio recomendado
+                    }
+
+                    if tipos["ps4p"]:
+                        registro_catalogo['Tipo'] = "Primaria"
+                        registro_catalogo['Consola'] = "PS4"
+                        registro_catalogo['Venta'] = precios["ps4p"]
+                        writer.writerow(registro_catalogo)
+
+                    if tipos["ps5p"]:
+                        registro_catalogo['Tipo'] = "Primaria"
+                        registro_catalogo['Consola'] = "PS5"
+                        registro_catalogo['Venta'] = precios["ps5p"]
+                        writer.writerow(registro_catalogo)
+
+                    if tipos["ps5s"]:
+                        registro_catalogo['Tipo'] = "Secundaria"
+                        registro_catalogo['Consola'] = "PS5"
+                        registro_catalogo['Venta'] = precios["ps5s"]
+                        writer.writerow(registro_catalogo)
+
+                    if tipos["ps4s"]:
+                        registro_catalogo['Tipo'] = "Secundaria"
+                        registro_catalogo['Consola'] = "PS4"
+                        registro_catalogo['Venta'] = precios["ps4s"]
+                        writer.writerow(registro_catalogo)
+
             print(f"    [+] Archivo guardado: '{path}'")
         except Exception as e:
             print(f"    [!] Error al guardar '{path}': {e}")
